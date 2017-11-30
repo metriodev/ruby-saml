@@ -113,7 +113,7 @@ module OneLogin
       #
       def sessionindex
         @sessionindex ||= begin
-          node = xpath_first_from_signed_assertion('/a:AuthnStatement')
+          node = xpath_first_from_assertion('/a:AuthnStatement')
           node.nil? ? nil : node.attributes['SessionIndex']
         end
       end
@@ -137,7 +137,7 @@ module OneLogin
         @attr_statements ||= begin
           attributes = Attributes.new
 
-          stmt_elements = xpath_from_signed_assertion('/a:AttributeStatement')
+          stmt_elements = xpath_from_assertion('/a:AttributeStatement')
           stmt_elements.each do |stmt_element|
             stmt_element.elements.each do |attr_element|
               if attr_element.name == "EncryptedAttribute"
@@ -181,7 +181,7 @@ module OneLogin
       #
       def session_expires_at
         @expires_at ||= begin
-          node = xpath_first_from_signed_assertion('/a:AuthnStatement')
+          node = xpath_first_from_assertion('/a:AuthnStatement')
           node.nil? ? nil : parse_time(node, "SessionNotOnOrAfter")
         end
       end
@@ -245,7 +245,7 @@ module OneLogin
       # @return [REXML::Element] Conditions Element if exists
       #
       def conditions
-        @conditions ||= xpath_first_from_signed_assertion('/a:Conditions')
+        @conditions ||= xpath_first_from_assertion('/a:Conditions')
       end
 
       # Gets the NotBefore Condition Element value.
@@ -280,7 +280,7 @@ module OneLogin
           end
 
           doc = decrypted_document.nil? ? document : decrypted_document
-          issuer_assertion_nodes = xpath_from_signed_assertion("/a:Issuer")
+          issuer_assertion_nodes = xpath_from_assertion("/a:Issuer")
           unless issuer_assertion_nodes.size == 1
             error_msg = "Issuer of the Assertion not found or multiple."
             raise ValidationError.new(error_msg)
@@ -321,7 +321,7 @@ module OneLogin
       #
       def audiences
         @audiences ||= begin
-          nodes = xpath_from_signed_assertion('/a:Conditions/a:AudienceRestriction/a:Audience')
+          nodes = xpath_from_assertion('/a:Conditions/a:AudienceRestriction/a:Audience')
           nodes.map { |node| Utils.element_text(node) }.reject(&:empty?)
         end
       end
@@ -344,7 +344,7 @@ module OneLogin
         return false unless validate_response_state
 
         validations = [
-          :validate_response_state,
+          :validate_idp_certificate,
           :validate_version,
           :validate_id,
           :validate_success_status,
@@ -413,6 +413,12 @@ module OneLogin
         return append_error("Blank response") if response.nil? || response.empty?
 
         return append_error("No settings on response") if settings.nil?
+
+        true
+      end
+
+      def validate_idp_certificate
+        return true if options[:skip_signatures]
 
         if settings.idp_cert_fingerprint.nil? && settings.idp_cert.nil? && settings.idp_cert_multi.nil?
           return append_error("No fingerprint or certificate on settings")
@@ -503,6 +509,8 @@ module OneLogin
       #                                   an are a Response or an Assertion Element, otherwise False if soft=True
       #
       def validate_signed_elements
+        return true if options[:skip_signatures]
+
         signature_nodes = REXML::XPath.match(
           decrypted_document.nil? ? document : decrypted_document,
           "//ds:Signature",
@@ -725,7 +733,7 @@ module OneLogin
         return true if options[:skip_subject_confirmation]
         valid_subject_confirmation = false
 
-        subject_confirmation_nodes = xpath_from_signed_assertion('/a:Subject/a:SubjectConfirmation')
+        subject_confirmation_nodes = xpath_from_assertion('/a:Subject/a:SubjectConfirmation')
 
         now = Time.now.utc
         subject_confirmation_nodes.each do |subject_confirmation|
@@ -785,6 +793,8 @@ module OneLogin
       # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_signature
+        return true if options[:skip_signatures]
+
         error_msg = "Invalid Signature on SAML Response"
 
         # If the response contains the signature, and the assertion was encrypted, validate the original SAML Response
@@ -842,11 +852,11 @@ module OneLogin
       def name_id_node
         @name_id_node ||=
           begin
-            encrypted_node = xpath_first_from_signed_assertion('/a:Subject/a:EncryptedID')
+            encrypted_node = xpath_first_from_assertion('/a:Subject/a:EncryptedID')
             if encrypted_node
               node = decrypt_nameid(encrypted_node)
             else
-              node = xpath_first_from_signed_assertion('/a:Subject/a:NameID')
+              node = xpath_first_from_assertion('/a:Subject/a:NameID')
             end
           end
       end
@@ -856,20 +866,31 @@ module OneLogin
       # @param subelt [String] The XPath pattern
       # @return [REXML::Element | nil] If any matches, return the Element
       #
-      def xpath_first_from_signed_assertion(subelt=nil)
+      def xpath_first_from_assertion(subelt=nil)
         doc = decrypted_document.nil? ? document : decrypted_document
-        node = REXML::XPath.first(
+
+        if options[:skip_signatures]
+          node = REXML::XPath.first(
+            doc,
+            "/p:Response/a:Assertion#{subelt}",
+            { "p" => PROTOCOL, "a" => ASSERTION }
+          )
+        else
+          node = REXML::XPath.first(
             doc,
             "/p:Response/a:Assertion[@ID=$id]#{subelt}",
             { "p" => PROTOCOL, "a" => ASSERTION },
             { 'id' => doc.signed_element_id }
-        )
-        node ||= REXML::XPath.first(
+          )
+
+          node ||= REXML::XPath.first(
             doc,
             "/p:Response[@ID=$id]/a:Assertion#{subelt}",
             { "p" => PROTOCOL, "a" => ASSERTION },
             { 'id' => doc.signed_element_id }
-        )
+          )
+        end
+
         node
       end
 
@@ -878,20 +899,32 @@ module OneLogin
       # @param subelt [String] The XPath pattern
       # @return [Array of REXML::Element] Return all matches
       #
-      def xpath_from_signed_assertion(subelt=nil)
+      def xpath_from_assertion(subelt=nil)
         doc = decrypted_document.nil? ? document : decrypted_document
-        node = REXML::XPath.match(
+
+        if options[:skip_signatures]
+          node = REXML::XPath.match(
+            doc,
+            "/p:Response/a:Assertion#{subelt}",
+            { "p" => PROTOCOL, "a" => ASSERTION }
+          )
+        else
+          node = REXML::XPath.match(
             doc,
             "/p:Response/a:Assertion[@ID=$id]#{subelt}",
             { "p" => PROTOCOL, "a" => ASSERTION },
             { 'id' => doc.signed_element_id }
-        )
-        node.concat( REXML::XPath.match(
-            doc,
-            "/p:Response[@ID=$id]/a:Assertion#{subelt}",
-            { "p" => PROTOCOL, "a" => ASSERTION },
-            { 'id' => doc.signed_element_id }
-        ))
+          )
+
+          node.concat(
+            REXML::XPath.match(
+              doc,
+              "/p:Response[@ID=$id]/a:Assertion#{subelt}",
+              { "p" => PROTOCOL, "a" => ASSERTION },
+              { 'id' => doc.signed_element_id }
+            )
+          )
+        end
       end
 
       # Generates the decrypted_document
@@ -976,7 +1009,6 @@ module OneLogin
         if settings.nil? || !settings.get_sp_key
           raise ValidationError.new('An ' + encrypt_node.name + ' found and no SP private key found on the settings to decrypt it')
         end
-
 
         if encrypt_node.name == 'EncryptedAttribute'
           node_header = '<node xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
