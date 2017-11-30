@@ -633,7 +633,9 @@ module OneLogin
       # @return [Boolean] True if there is a conditions element and is unique
       #
       def validate_one_conditions
-        conditions_nodes = xpath_from_signed_assertion('/a:Conditions')
+        return true if options[:skip_conditions]
+
+        conditions_nodes = xpath_from_assertion('/a:Conditions')
         unless conditions_nodes.size == 1
           error_msg = "The Assertion must include one Conditions element"
           return append_error(error_msg)
