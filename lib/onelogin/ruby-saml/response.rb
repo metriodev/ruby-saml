@@ -589,6 +589,7 @@ module OneLogin
       # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_audience
+        return true if options[:skip_audience]
         return true if audiences.empty? || settings.issuer.nil? || settings.issuer.empty?
 
         unless audiences.include? settings.issuer
