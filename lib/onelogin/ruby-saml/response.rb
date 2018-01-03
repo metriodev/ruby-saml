@@ -974,6 +974,9 @@ module OneLogin
         )
         response_node.add(decrypt_assertion(encrypted_assertion_node))
         encrypted_assertion_node.remove
+
+        response_node.context[:attribute_quote] = :quote
+
         XMLSecurity::SignedDocument.new(response_node.to_s)
       end
 
@@ -1037,6 +1040,7 @@ module OneLogin
         # create a parent node first with the namespace defined
         elem_plaintext = node_header + elem_plaintext + '</node>'
         doc = REXML::Document.new(elem_plaintext)
+        doc.context[:attribute_quote] = :quote
         doc.root[0]
       end
 
