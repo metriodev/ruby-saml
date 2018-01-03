@@ -376,7 +376,8 @@ module OneLogin
           :validate_session_expiration,
           :validate_subject_confirmation,
           :validate_name_id,
-          :validate_signature
+          :validate_signature,
+          :validate_encryption
         ]
 
         if collect_errors
@@ -800,6 +801,16 @@ module OneLogin
         end
 
         true
+      end
+
+      # Validates the Encryption
+      # @return [Boolean] True if encryption is skipped, otherwise False if EncryptedAssertion is missing, if soft=True
+      # @raise [ValidationError] if soft == false and validation fails
+      #
+      def validate_encryption
+        options[:skip_encryption] || assertion_encrypted? ?
+          true :
+          append_error("EncryptedAssertion missing on SAML Response")
       end
 
       # Validates the Signature
