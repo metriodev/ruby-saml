@@ -37,6 +37,20 @@ class SloLogoutresponseTest < Minitest::Test
       assert_match /&RelayState=http%3A%2F%2Fidp.example.com$/, unauth_url
     end
 
+    it "RelayState cases" do
+      unauth_url = OneLogin::RubySaml::SloLogoutresponse.new.create(settings, logout_request.id, nil, { :RelayState => nil })
+      assert !unauth_url.include?('RelayState')
+
+      unauth_url = OneLogin::RubySaml::SloLogoutresponse.new.create(settings, logout_request.id, nil, { :RelayState => "http://example.com" })
+      assert unauth_url.include?('&RelayState=http%3A%2F%2Fexample.com')
+
+      unauth_url = OneLogin::RubySaml::SloLogoutresponse.new.create(settings, logout_request.id, nil, { 'RelayState' => nil })
+      assert !unauth_url.include?('RelayState')
+
+      unauth_url = OneLogin::RubySaml::SloLogoutresponse.new.create(settings, logout_request.id, nil, { 'RelayState' => "http://example.com" })
+      assert unauth_url.include?('&RelayState=http%3A%2F%2Fexample.com')
+    end
+
     it "set InResponseTo to the ID from the logout request" do
       unauth_url = OneLogin::RubySaml::SloLogoutresponse.new.create(settings, logout_request.id)
 
@@ -57,6 +71,40 @@ class SloLogoutresponseTest < Minitest::Test
         settings.compress_response = false
         settings.security[:logout_responses_signed] = true
         settings.security[:embed_sign] = true
+      end
+
+      it "doesn't sign through create_xml_document" do
+        unauth_res = OneLogin::RubySaml::SloLogoutresponse.new
+        inflated = unauth_res.create_xml_document(settings).to_s
+
+        refute_match %r[<ds:SignatureValue>([a-zA-Z0-9/+=]+)</ds:SignatureValue>], inflated
+        refute_match %r[<ds:SignatureMethod Algorithm='http://www.w3.org/2000/09/xmldsig#rsa-sha1'/>], inflated
+        refute_match %r[<ds:DigestMethod Algorithm='http://www.w3.org/2000/09/xmldsig#sha1'/>], inflated
+      end
+
+      it "sign unsigned request" do
+        unauth_res = OneLogin::RubySaml::SloLogoutresponse.new
+        unauth_res_doc = unauth_res.create_xml_document(settings)
+        inflated = unauth_res_doc.to_s
+
+        refute_match %r[<ds:SignatureValue>([a-zA-Z0-9/+=]+)</ds:SignatureValue>], inflated
+        refute_match %r[<ds:SignatureMethod Algorithm='http://www.w3.org/2000/09/xmldsig#rsa-sha1'/>], inflated
+        refute_match %r[<ds:DigestMethod Algorithm='http://www.w3.org/2000/09/xmldsig#sha1'/>], inflated
+
+        inflated = unauth_res.sign_document(unauth_res_doc, settings).to_s
+
+        assert_match %r[<ds:SignatureValue>([a-zA-Z0-9/+=]+)</ds:SignatureValue>], inflated
+        assert_match %r[<ds:SignatureMethod Algorithm='http://www.w3.org/2000/09/xmldsig#rsa-sha1'/>], inflated
+        assert_match %r[<ds:DigestMethod Algorithm='http://www.w3.org/2000/09/xmldsig#sha1'/>], inflated
+      end
+
+      it "signs through create_logout_response_xml_doc" do
+        unauth_res = OneLogin::RubySaml::SloLogoutresponse.new
+        inflated = unauth_res.create_logout_response_xml_doc(settings).to_s
+
+        assert_match %r[<ds:SignatureValue>([a-zA-Z0-9/+=]+)</ds:SignatureValue>], inflated
+        assert_match %r[<ds:SignatureMethod Algorithm='http://www.w3.org/2000/09/xmldsig#rsa-sha1'/>], inflated
+        assert_match %r[<ds:DigestMethod Algorithm='http://www.w3.org/2000/09/xmldsig#sha1'/>], inflated
       end
 
       it "create a signed logout response" do

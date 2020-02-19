@@ -1,6 +1,7 @@
 require File.expand_path(File.join(File.dirname(__FILE__), "test_helper"))
 
 require 'onelogin/ruby-saml/authrequest'
+require 'onelogin/ruby-saml/setting_error'
 
 class RequestTest < Minitest::Test
 
@@ -155,12 +156,56 @@ class RequestTest < Minitest::Test
       assert_match /<samlp:NameIDPolicy[^<]* AllowCreate='false'/, inflated
     end
 
+    it "create the SAMLRequest URL parameter with Subject" do
+      settings.name_identifier_value_requested = "testuser@example.com"
+      settings.name_identifier_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+      auth_url = OneLogin::RubySaml::Authrequest.new.create(settings)
+      assert_match /^http:\/\/example\.com\?SAMLRequest=/, auth_url
+      payload = CGI.unescape(auth_url.split("=").last)
+      decoded = Base64.decode64(payload)
+
+      zstream = Zlib::Inflate.new(-Zlib::MAX_WBITS)
+      inflated = zstream.inflate(decoded)
+      zstream.finish
+      zstream.close
+
+      assert_match /<samlp:NameIDPolicy[^<]* AllowCreate='true'/, inflated
+    end
+
     it "accept extra parameters" do
       auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { :hello => "there" })
       assert_match /&hello=there$/, auth_url
 
       auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { :hello => nil })
       assert_match /&hello=$/, auth_url
+    end
+
+    it "RelayState cases" do
+      auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { :RelayState => nil })
+      assert !auth_url.include?('RelayState')
+
+      auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { :RelayState => "http://example.com" })
+      assert auth_url.include?('&RelayState=http%3A%2F%2Fexample.com')
+
+      auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { 'RelayState' => nil })
+      assert !auth_url.include?('RelayState')
+
+      auth_url = OneLogin::RubySaml::Authrequest.new.create(settings, { 'RelayState' => "http://example.com" })
+      assert auth_url.include?('&RelayState=http%3A%2F%2Fexample.com')
+    end
+
+    describe "when the target url is not set" do
+      before do
+        settings.idp_sso_target_url = nil
+      end
+
+      it "raises an error with a descriptive message" do
+        err = assert_raises OneLogin::RubySaml::SettingError do
+          OneLogin::RubySaml::Authrequest.new.create(settings)
+        end
+        assert_match /idp_sso_target_url is not set/, err.message
+      end
     end
 
     describe "when the target url doesn't contain a query string" do

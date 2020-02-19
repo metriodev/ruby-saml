@@ -29,6 +29,11 @@ class UtilsTest < Minitest::Test
       assert_equal formatted_certificate, OneLogin::RubySaml::Utils.format_cert(invalid_certificate2)
     end
 
+    it "returns the cert when it's encoded" do
+      encoded_certificate = read_certificate("certificate.der")
+      assert_equal encoded_certificate, OneLogin::RubySaml::Utils.format_cert(encoded_certificate)
+    end
+
     it "reformats the certificate when there line breaks and no headers" do
       invalid_certificate3 = read_certificate("invalid_certificate3")
       assert_equal formatted_certificate, OneLogin::RubySaml::Utils.format_cert(invalid_certificate3)
@@ -212,6 +217,43 @@ class UtilsTest < Minitest::Test
         settings = 'not stuff'
         assert !OneLogin::RubySaml::Utils.uri_match?(destination, settings)
       end
+    end
+
+    describe 'element_text' do
+      it 'returns the element text' do
+        element = REXML::Document.new('<element>element text</element>').elements.first
+        assert_equal 'element text', OneLogin::RubySaml::Utils.element_text(element)
+      end
+
+      it 'returns all segments of the element text' do
+        element = REXML::Document.new('<element>element <!-- comment -->text</element>').elements.first
+        assert_equal 'element text', OneLogin::RubySaml::Utils.element_text(element)
+      end
+
+      it 'returns normalized element text' do
+        element = REXML::Document.new('<element>element &amp; text</element>').elements.first
+        assert_equal 'element & text', OneLogin::RubySaml::Utils.element_text(element)
+      end
+
+      it 'returns the CDATA element text' do
+        element = REXML::Document.new('<element><![CDATA[element & text]]></element>').elements.first
+        assert_equal 'element & text', OneLogin::RubySaml::Utils.element_text(element)
+      end
+
+      it 'returns the element text with newlines and additional whitespace' do
+        element = REXML::Document.new("<element>  element \n text  </element>").elements.first
+        assert_equal "  element \n text  ", OneLogin::RubySaml::Utils.element_text(element)
+      end
+
+      it 'returns nil when element is nil' do
+        assert_nil OneLogin::RubySaml::Utils.element_text(nil)
+      end
+
+      it 'returns empty string when element has no text' do
+        element = REXML::Document.new('<element></element>').elements.first
+        assert_equal '', OneLogin::RubySaml::Utils.element_text(element)
+      end
+
     end
   end
 end

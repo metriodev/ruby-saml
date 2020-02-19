@@ -23,7 +23,9 @@ class RubySamlTest < Minitest::Test
     let(:response_no_version) { OneLogin::RubySaml::Response.new(read_invalid_response("no_saml2.xml.base64")) }
     let(:response_multi_assertion) { OneLogin::RubySaml::Response.new(read_invalid_response("multiple_assertions.xml.base64")) }
     let(:response_no_conditions) { OneLogin::RubySaml::Response.new(read_invalid_response("no_conditions.xml.base64")) }
+    let(:response_no_conditions_with_skip) { OneLogin::RubySaml::Response.new(read_invalid_response("no_conditions.xml.base64"), { :skip_conditions => true }) }
     let(:response_no_authnstatement) { OneLogin::RubySaml::Response.new(read_invalid_response("no_authnstatement.xml.base64")) }
+    let(:response_no_authnstatement_with_skip) { OneLogin::RubySaml::Response.new(read_invalid_response("no_authnstatement.xml.base64"), {:skip_authnstatement => true}) }
     let(:response_empty_destination) { OneLogin::RubySaml::Response.new(read_invalid_response("empty_destination.xml.base64")) }
     let(:response_empty_destination_with_skip) { OneLogin::RubySaml::Response.new(read_invalid_response("empty_destination.xml.base64"), {:skip_destination => true}) }
     let(:response_no_status) { OneLogin::RubySaml::Response.new(read_invalid_response("no_status.xml.base64")) }
@@ -34,6 +36,7 @@ class RubySamlTest < Minitest::Test
     let(:response_encrypted_attrs) { OneLogin::RubySaml::Response.new(response_document_encrypted_attrs) }
     let(:response_no_signed_elements) { OneLogin::RubySaml::Response.new(read_invalid_response("no_signature.xml.base64")) }
     let(:response_multiple_signed) { OneLogin::RubySaml::Response.new(read_invalid_response("multiple_signed.xml.base64")) }
+    let(:response_audience_self_closed) { OneLogin::RubySaml::Response.new(read_response("response_audience_self_closed_tag.xml.base64")) }
     let(:response_invalid_audience) { OneLogin::RubySaml::Response.new(read_invalid_response("invalid_audience.xml.base64")) }
     let(:response_invalid_signed_element) { OneLogin::RubySaml::Response.new(read_invalid_response("response_invalid_signed_element.xml.base64")) }
     let(:response_invalid_issuer_assertion) { OneLogin::RubySaml::Response.new(read_invalid_response("invalid_issuer_assertion.xml.base64")) }
@@ -53,8 +56,20 @@ class RubySamlTest < Minitest::Test
     let(:response_invalid_signature_position) { OneLogin::RubySaml::Response.new(read_invalid_response("invalid_signature_position.xml.base64")) }
     let(:response_encrypted_nameid) { OneLogin::RubySaml::Response.new(response_document_encrypted_nameid) }
 
+    def generate_audience_error(expected, actual)
+      s = actual.count > 1 ? 's' : '';
+      return "Invalid Audience#{s}. The audience#{s} #{actual.join(',')}, did not match the expected audience #{expected}"
+    end
+
     it "raise an exception when response is initialized with nil" do
       assert_raises(ArgumentError) { OneLogin::RubySaml::Response.new(nil) }
+    end
+
+    it "not filter available options only" do
+      options = { :skip_destination => true, :foo => :bar }
+      response = OneLogin::RubySaml::Response.new(response_document_valid_signed, options)
+      assert_includes response.options.keys, :skip_destination
+      assert_includes response.options.keys, :foo
     end
 
     it "be able to parse a document which contains ampersands" do
@@ -67,6 +82,46 @@ class RubySamlTest < Minitest::Test
 
       assert !ampersands_response.is_valid?
       assert_includes ampersands_response.errors, "SAML Response must contain 1 assertion"
+    end
+
+    describe "Prevent node text with comment attack (VU#475445)" do
+      before do
+        @response = OneLogin::RubySaml::Response.new(read_response('response_node_text_attack.xml.base64'))
+      end
+
+      it "receives the full NameID when there is an injected comment" do
+        assert_equal "support@onelogin.com", @response.name_id
+      end
+
+      it "receives the full AttributeValue when there is an injected comment" do
+        assert_equal "smith", @response.attributes["surname"]
+      end
+    end
+
+    describe "Another test to prevent with comment attack (VU#475445)" do
+      before do
+        @response = OneLogin::RubySaml::Response.new(read_response('response_node_text_attack2.xml.base64'), {:skip_recipient_check => true })
+        @response.settings = settings
+        @response.settings.idp_cert_fingerprint = ruby_saml_cert_fingerprint
+      end
+
+      it "receives the full NameID when there is an injected comment, validates the response" do
+        assert_equal "test@onelogin.com", @response.name_id
+      end
+    end
+
+    describe "Another test with CDATA injected" do
+      before do
+        @response = OneLogin::RubySaml::Response.new(read_response('response_node_text_attack3.xml.base64'), {:skip_recipient_check => true })
+        @response.settings = settings
+        @response.settings.idp_cert_fingerprint = ruby_saml_cert_fingerprint
+      end
+
+      it "it normalizes CDATA but reject SAMLResponse due signature invalidation" do
+        assert_equal "test@onelogin.com.evil.com", @response.name_id
+        assert !@response.is_valid?
+        assert_includes @response.errors, "Invalid Signature on SAML Response"
+      end
     end
 
     describe "Prevent XEE attack" do
@@ -204,10 +259,10 @@ class RubySamlTest < Minitest::Test
 
         it "raise when there is no valid audience" do
           settings.idp_cert_fingerprint = signature_fingerprint_1
-          settings.issuer = 'invalid'
+          settings.sp_entity_id = 'invalid'
           response_valid_signed.settings = settings
           response_valid_signed.soft = false
-          error_msg = "#{response_valid_signed.settings.issuer} is not a valid audience for this Response - Valid audiences: https://someone.example.com/audience"
+          error_msg = generate_audience_error(response_valid_signed.settings.sp_entity_id, ['https://someone.example.com/audience'])
           assert_raises(OneLogin::RubySaml::ValidationError, error_msg) do
             response_valid_signed.is_valid?
           end
@@ -360,10 +415,11 @@ class RubySamlTest < Minitest::Test
 
         it "return false when there is no valid audience" do
           settings.idp_cert_fingerprint = signature_fingerprint_1
-          settings.issuer = 'invalid'
+          settings.sp_entity_id = 'invalid'
           response_valid_signed.settings = settings
           response_valid_signed.is_valid?
-          assert_includes response_valid_signed.errors, "#{response_valid_signed.settings.issuer} is not a valid audience for this Response - Valid audiences: https://someone.example.com/audience"
+
+          assert_includes response_valid_signed.errors, generate_audience_error(response_valid_signed.settings.sp_entity_id, ['https://someone.example.com/audience'])
         end
 
         it "return false when no ID present in the SAML Response" do
@@ -395,11 +451,11 @@ class RubySamlTest < Minitest::Test
 
         it "collect errors when collect_errors=true" do
           settings.idp_cert = ruby_saml_cert_text
-          settings.issuer = 'invalid'
+          settings.sp_entity_id = 'invalid'
           response_invalid_subjectconfirmation_recipient.settings = settings
           collect_errors = true
           response_invalid_subjectconfirmation_recipient.is_valid?(collect_errors)
-          assert_includes response_invalid_subjectconfirmation_recipient.errors, "invalid is not a valid audience for this Response - Valid audiences: http://stuff.com/endpoints/metadata.php"
+          assert_includes response_invalid_subjectconfirmation_recipient.errors, generate_audience_error('invalid', ['http://stuff.com/endpoints/metadata.php'])
           assert_includes response_invalid_subjectconfirmation_recipient.errors, "Invalid Signature on SAML Response"
         end
       end
@@ -408,16 +464,23 @@ class RubySamlTest < Minitest::Test
     describe "#validate_audience" do
       it "return true when the audience is valid" do
         response.settings = settings
-        response.settings.issuer = '{audience}'
+        response.settings.sp_entity_id = '{audience}'
         assert response.send(:validate_audience)
         assert_empty response.errors
       end
 
+      it "return true when the audience is self closing" do
+        response_audience_self_closed.settings = settings
+        response_audience_self_closed.settings.sp_entity_id = '{audience}'
+        assert response_audience_self_closed.send(:validate_audience)
+        assert_empty response_audience_self_closed.errors
+      end
+
       it "return false when the audience is valid" do
         response.settings = settings
-        response.settings.issuer = 'invalid_audience'
+        response.settings.sp_entity_id = 'invalid_audience'
         assert !response.send(:validate_audience)
-        assert_includes response.errors, "#{response.settings.issuer} is not a valid audience for this Response - Valid audiences: {audience}"
+        assert_includes response.errors, generate_audience_error(response.settings.sp_entity_id, ['{audience}'])
       end
     end
 
@@ -564,6 +627,21 @@ class RubySamlTest < Minitest::Test
       end
     end
 
+    describe "validate_formatted_x509_certificate" do
+      let(:response_with_formatted_x509certificate) {
+        OneLogin::RubySaml::Response.new(read_response("valid_response_with_formatted_x509certificate.xml.base64"), {
+          :skip_conditions => true,
+          :skip_subject_confirmation => true })
+        }
+
+      it "be able to parse the response wihout errors" do
+        response_with_formatted_x509certificate.settings = settings
+        response_with_formatted_x509certificate.settings.idp_cert = ruby_saml_cert_text
+        assert response_with_formatted_x509certificate.is_valid?
+        assert_empty response_with_formatted_x509certificate.errors
+      end
+    end
+
     describe "#validate_in_response_to" do
       it "return true when the inResponseTo value matches the Request ID" do
         response = OneLogin::RubySaml::Response.new(response_document_valid_signed, :settings => settings, :matches_request_id => "_fc4a34b0-7efb-012e-caae-782bcb13bb38")
@@ -587,23 +665,23 @@ class RubySamlTest < Minitest::Test
     describe "#validate_audience" do
       it "return true when the audience is valid" do
         response_valid_signed.settings = settings
-        response_valid_signed.settings.issuer = "https://someone.example.com/audience"
+        response_valid_signed.settings.sp_entity_id = "https://someone.example.com/audience"
         assert response_valid_signed.send(:validate_audience)
         assert_empty response_valid_signed.errors
       end
 
-      it "return true when there is not issuer defined" do
+      it "return true when there is not sp_entity_id defined" do
         response_valid_signed.settings = settings
-        response_valid_signed.settings.issuer = nil
+        response_valid_signed.settings.sp_entity_id = nil
         assert response_valid_signed.send(:validate_audience)
         assert_empty response_valid_signed.errors
       end
 
       it "return false when there is no valid audience" do
         response_invalid_audience.settings = settings
-        response_invalid_audience.settings.issuer = "https://invalid.example.com/audience"
+        response_invalid_audience.settings.sp_entity_id = "https://invalid.example.com/audience"
         assert !response_invalid_audience.send(:validate_audience)
-        assert_includes response_invalid_audience.errors, "#{response_invalid_audience.settings.issuer} is not a valid audience for this Response - Valid audiences: http://invalid.audience.com"
+        assert_includes response_invalid_audience.errors, generate_audience_error(response_invalid_audience.settings.sp_entity_id, ['http://invalid.audience.com'])
       end
     end
 
@@ -739,7 +817,7 @@ class RubySamlTest < Minitest::Test
       it "return false when the session has expired" do
         response.settings = settings
         assert !response.send(:validate_session_expiration)
-        assert_includes response.errors, "The attributes have expired, based on the SessionNotOnOrAfter of the AttributeStatement of this Response"
+        assert_includes response.errors, "The attributes have expired, based on the SessionNotOnOrAfter of the AuthnStatement of this Response"
       end
 
       it "returns true when the session has expired, but is still within the allowed_clock_drift" do
@@ -802,6 +880,15 @@ class RubySamlTest < Minitest::Test
         assert_includes response_valid_signed_without_x509certificate.errors, "Invalid Signature on SAML Response"
       end
 
+      it "return false when cert expired and check_idp_cert_expiration enabled" do
+        settings.idp_cert_fingerprint = nil
+        settings.idp_cert = ruby_saml_cert_text
+        settings.security[:check_idp_cert_expiration] = true
+        response_valid_signed.settings = settings
+        assert !response_valid_signed.send(:validate_signature)
+        assert_includes response_valid_signed.errors, "IdP x509 certificate expired"
+      end
+
       it "return false when no X509Certificate and the cert provided at settings mismatches" do
         settings.idp_cert_fingerprint = nil
         settings.idp_cert = signature_1
@@ -827,6 +914,7 @@ class RubySamlTest < Minitest::Test
         response_wrapped.settings = settings
         assert !response_wrapped.send(:validate_signature)
         assert_includes response_wrapped.errors, "Invalid Signature on SAML Response"
+        assert_includes response_wrapped.errors, "Signed element id #pfxc3d2b542-0f7e-8767-8e87-5b0dc6913375 is not found"
       end
     end
 
@@ -874,7 +962,7 @@ class RubySamlTest < Minitest::Test
       end
 
       it "return false when wrong_spnamequalifier" do
-        settings.issuer = 'sp_entity_id'
+        settings.sp_entity_id = 'sp_entity_id'
         response_wrong_spnamequalifier.settings = settings
         assert !response_wrong_spnamequalifier.send(:validate_name_id)
         assert_includes response_wrong_spnamequalifier.errors, "The SPNameQualifier value mistmatch the SP entityID value."
@@ -887,7 +975,7 @@ class RubySamlTest < Minitest::Test
       end
 
       it "return true when nameid is valid and response_wrong_spnamequalifier matches the SP issuer" do
-        settings.issuer = 'wrong-sp-entityid'
+        settings.sp_entity_id = 'wrong-sp-entityid'
         response_wrong_spnamequalifier.settings = settings
         assert response_wrong_spnamequalifier.send(:validate_name_id)
       end
@@ -935,6 +1023,11 @@ class RubySamlTest < Minitest::Test
         response.soft = true
         assert response.send(:validate_one_conditions)
       end
+
+      it "return true when no conditions are present and skip_conditions is true" do
+        response_no_conditions_with_skip.soft = true
+        assert response_no_conditions_with_skip.send(:validate_one_conditions)
+      end
     end
 
     describe "#check_one_authnstatement" do
@@ -947,6 +1040,12 @@ class RubySamlTest < Minitest::Test
       it "return true when one authnstatement element" do
         response.soft = true
         assert response.send(:validate_one_authnstatement)
+      end
+
+      it "return true when SAML Response is empty but skip_authstatement option is used" do
+        response_no_authnstatement_with_skip.soft = true
+        assert response_no_authnstatement_with_skip.send(:validate_one_authnstatement)
+        assert_empty response_empty_destination_with_skip.errors
       end
     end
 
@@ -980,6 +1079,24 @@ class RubySamlTest < Minitest::Test
           special_response_with_saml2_namespace = OneLogin::RubySaml::Response.new(
             response_document_with_saml2_namespace,
             :allowed_clock_drift => 0.516
+          )
+          assert special_response_with_saml2_namespace.send(:validate_conditions)
+        end
+
+        Timecop.freeze(Time.parse("2011-06-14T18:21:01Z")) do
+          settings.soft = true
+          special_response_with_saml2_namespace = OneLogin::RubySaml::Response.new(
+            response_document_with_saml2_namespace,
+            :allowed_clock_drift => '0.515',
+            :settings => settings
+          )
+          assert !special_response_with_saml2_namespace.send(:validate_conditions)
+        end
+
+        Timecop.freeze(Time.parse("2011-06-14T18:21:01Z")) do
+          special_response_with_saml2_namespace = OneLogin::RubySaml::Response.new(
+            response_document_with_saml2_namespace,
+            :allowed_clock_drift => '0.516'
           )
           assert special_response_with_saml2_namespace.send(:validate_conditions)
         end
@@ -1290,7 +1407,7 @@ class RubySamlTest < Minitest::Test
 
       before do
         settings.idp_cert_fingerprint = 'EE:17:4E:FB:A8:81:71:12:0D:2A:78:43:BC:E7:0C:07:58:79:F4:F4'
-        settings.issuer = 'http://rubysaml.com:3000/saml/metadata'
+        settings.sp_entity_id = 'http://rubysaml.com:3000/saml/metadata'
         settings.assertion_consumer_service_url = 'http://rubysaml.com:3000/saml/acs'
         settings.certificate = ruby_saml_cert_text
         settings.private_key = ruby_saml_key_text

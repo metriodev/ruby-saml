@@ -3,6 +3,7 @@ require "rexml/document"
 require "onelogin/ruby-saml/logging"
 require "onelogin/ruby-saml/saml_message"
 require "onelogin/ruby-saml/utils"
+require "onelogin/ruby-saml/setting_error"
 
 # Only supports SAML 2.0
 module OneLogin
@@ -36,6 +37,7 @@ module OneLogin
         params.each_pair do |key, value|
           request_params << "&#{key.to_s}=#{CGI.escape(value.to_s)}"
         end
+        raise SettingError.new "Invalid settings, idp_sso_target_url is not set!" if settings.idp_sso_target_url.nil? or settings.idp_sso_target_url.empty?
         @login_url = settings.idp_sso_target_url + request_params
       end
 
@@ -49,6 +51,11 @@ module OneLogin
         # Based on the HashWithIndifferentAccess value in Rails we could experience
         # conflicts so this line will solve them.
         relay_state = params[:RelayState] || params['RelayState']
+
+        if relay_state.nil?
+          params.delete(:RelayState)
+          params.delete('RelayState')
+        end
 
         request_doc = create_authentication_xml_doc(settings)
         request_doc.context[:attribute_quote] = :quote if settings.double_quote_xml_attribute_values
@@ -101,7 +108,7 @@ module OneLogin
         root.attributes['ID'] = uuid
         root.attributes['IssueInstant'] = time
         root.attributes['Version'] = "2.0"
-        root.attributes['Destination'] = settings.idp_sso_target_url unless settings.idp_sso_target_url.nil?
+        root.attributes['Destination'] = settings.idp_sso_target_url unless settings.idp_sso_target_url.nil? or settings.idp_sso_target_url.empty?
         root.attributes['IsPassive'] = settings.passive unless settings.passive.nil?
         root.attributes['ProtocolBinding'] = settings.protocol_binding unless settings.protocol_binding.nil?
         root.attributes["AttributeConsumingServiceIndex"] = settings.attributes_index unless settings.attributes_index.nil?
@@ -112,9 +119,20 @@ module OneLogin
           root.attributes["AssertionConsumerServiceURL"] = settings.assertion_consumer_service_url
         end
 
-        if settings.issuer != nil
+        if settings.sp_entity_id != nil
           issuer = root.add_element "saml:Issuer"
-          issuer.text = settings.issuer
+          issuer.text = settings.sp_entity_id
+        end
+
+        if settings.name_identifier_value_requested != nil
+          subject = root.add_element "saml:Subject"
+
+          nameid = subject.add_element "saml:NameID"
+          nameid.attributes['Format'] = settings.name_identifier_format if settings.name_identifier_format
+          nameid.text = settings.name_identifier_value_requested
+
+          subject_confirmation = subject.add_element "saml:SubjectConfirmation"
+          subject_confirmation.attributes['Method'] = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
         end
 
         if settings.name_identifier_format != nil

@@ -3,6 +3,7 @@ if RUBY_VERSION < '1.9'
 else
   require 'securerandom'
 end
+require "openssl"
 
 module OneLogin
   module RubySaml
@@ -15,6 +16,18 @@ module OneLogin
       DSIG      = "http://www.w3.org/2000/09/xmldsig#"
       XENC      = "http://www.w3.org/2001/04/xmlenc#"
 
+      # Checks if the x509 cert provided is expired
+      #
+      # @param cert [Certificate] The x509 certificate
+      #
+      def self.is_cert_expired(cert)
+        if cert.is_a?(String)
+          cert = OpenSSL::X509::Certificate.new(cert)
+        end
+
+        return cert.not_after < Time.now
+      end
+
       # Return a properly formatted x509 certificate
       #
       # @param cert [String] The original certificate
@@ -22,7 +35,11 @@ module OneLogin
       #
       def self.format_cert(cert)
         # don't try to format an encoded certificate or if is empty or nil
-        return cert if cert.nil? || cert.empty? || cert.match(/\x0d/)
+        if cert.respond_to?(:ascii_only?)
+          return cert if cert.nil? || cert.empty? || !cert.ascii_only?
+        else
+          return cert if cert.nil? || cert.empty? || cert.match(/\x0d/)
+        end
 
         if cert.scan(/BEGIN CERTIFICATE/).length > 1
           formatted_cert = []
@@ -32,7 +49,9 @@ module OneLogin
           formatted_cert.join("\n")
         else
           cert = cert.gsub(/\-{5}\s?(BEGIN|END) CERTIFICATE\s?\-{5}/, "")
-          cert = cert.gsub(/[\n\r\s]/, "")
+          cert = cert.gsub(/\r/, "")
+          cert = cert.gsub(/\n/, "")
+          cert = cert.gsub(/\s/, "")
           cert = cert.scan(/.{1,64}/)
           cert = cert.join("\n")
           "-----BEGIN CERTIFICATE-----\n#{cert}\n-----END CERTIFICATE-----"
@@ -51,7 +70,9 @@ module OneLogin
         # is this an rsa key?
         rsa_key = key.match("RSA PRIVATE KEY")
         key = key.gsub(/\-{5}\s?(BEGIN|END)( RSA)? PRIVATE KEY\s?\-{5}/, "")
-        key = key.gsub(/[\n\r\s]/, "")
+        key = key.gsub(/\n/, "")
+        key = key.gsub(/\r/, "")
+        key = key.gsub(/\s/, "")
         key = key.scan(/.{1,64}/)
         key = key.join("\n")
         key_label = rsa_key ? "RSA PRIVATE KEY" : "PRIVATE KEY"
@@ -98,7 +119,7 @@ module OneLogin
       # @param rawparams [Hash] Raw GET Parameters
       # @param params [Hash] GET Parameters
       # @return [Hash] New raw parameters
-      # 
+      #
       def self.prepare_raw_get_params(rawparams, params)
         rawparams ||= {}
 
@@ -107,7 +128,7 @@ module OneLogin
         end
         if rawparams['SAMLResponse'].nil? && !params['SAMLResponse'].nil?
           rawparams['SAMLResponse'] = CGI.escape(params['SAMLResponse'])
-        end        
+        end
         if rawparams['RelayState'].nil? && !params['RelayState'].nil?
           rawparams['RelayState'] = CGI.escape(params['RelayState'])
         end
@@ -136,16 +157,16 @@ module OneLogin
       # @param status_code [String] StatusCode value
       # @param status_message [Strig] StatusMessage value
       # @return [String] The status error message
-      def self.status_error_msg(error_msg, status_code = nil, status_message = nil)
-        unless status_code.nil?
-          if status_code.include? "|"
-            status_codes = status_code.split(' | ')
+      def self.status_error_msg(error_msg, raw_status_code = nil, status_message = nil)
+        unless raw_status_code.nil?
+          if raw_status_code.include? "|"
+            status_codes = raw_status_code.split(' | ')
             values = status_codes.collect do |status_code|
               status_code.split(':').last
             end
             printable_code = values.join(" => ")
           else
-            printable_code = status_code.split(':').last
+            printable_code = raw_status_code.split(':').last
           end
           error_msg << ', was ' + printable_code
         end
@@ -173,7 +194,7 @@ module OneLogin
           "./xenc:CipherData/xenc:CipherValue",
           { 'xenc' => XENC }
         )
-        node = Base64.decode64(cipher_value.text)
+        node = Base64.decode64(element_text(cipher_value))
         encrypt_method = REXML::XPath.first(
           encrypt_data,
           "./xenc:EncryptionMethod",
@@ -201,7 +222,7 @@ module OneLogin
           "xenc" => XENC
         )
 
-        cipher_text = Base64.decode64(encrypted_symmetric_key_element.text)
+        cipher_text = Base64.decode64(element_text(encrypted_symmetric_key_element))
 
         encrypt_method = REXML::XPath.first(
           encrypted_key,
@@ -280,6 +301,13 @@ module OneLogin
       # @return [Boolean]
       def self.original_uri_match?(destination_url, settings_url)
         destination_url == settings_url
+      end
+
+      # Given a REXML::Element instance, return the concatenation of all child text nodes. Assumes
+      # that there all children other than text nodes can be ignored (e.g. comments). If nil is
+      # passed, nil will be returned.
+      def self.element_text(element)
+        element.texts.map(&:value).join if element
       end
     end
   end

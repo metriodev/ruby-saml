@@ -17,7 +17,6 @@ Gem::Specification.new do |s|
   ]
   s.files = `git ls-files`.split("\n")
   s.homepage = %q{http://github.com/onelogin/ruby-saml}
-  s.rubyforge_project = %q{http://www.rubygems.org/gems/ruby-saml}
   s.rdoc_options = ["--charset=UTF-8"]
   s.require_paths = ["lib"]
   s.rubygems_version = %q{1.3.7}
@@ -29,22 +28,29 @@ Gem::Specification.new do |s|
   # Nokogiri's version dependent on the Ruby version, even though we would
   # have liked to constrain Ruby 1.8.7 to install only the 1.5.x versions.
   if defined?(JRUBY_VERSION)
-    s.add_runtime_dependency('nokogiri', '>= 1.6.0')
-    s.add_runtime_dependency('jruby-openssl', '>= 0.9.8')
+    if JRUBY_VERSION < '9.2.0.0'
+      s.add_runtime_dependency('nokogiri', '>= 1.8.2', '<= 1.8.5')
+      s.add_runtime_dependency('jruby-openssl', '>= 0.9.8')
+    else
+      s.add_runtime_dependency('nokogiri', '>= 1.8.2')
+    end
   elsif RUBY_VERSION < '1.9'
     s.add_runtime_dependency('uuid')
     s.add_runtime_dependency('nokogiri', '<= 1.5.11')
   elsif RUBY_VERSION < '2.1'
     s.add_runtime_dependency('nokogiri', '>= 1.5.10', '<= 1.6.8.1')
+  elseif RUBY_VERSION < '2.3'
+    s.add_runtime_dependency('nokogiri', '>= 1.9.1', '<= 1.10.0')
   else
-    s.add_runtime_dependency('nokogiri', '>= 1.5.10')
+    s.add_runtime_dependency('nokogiri', '>= 1.10.5')
   end
 
+  s.add_development_dependency('coveralls')
   s.add_development_dependency('minitest', '~> 5.5')
   s.add_development_dependency('mocha',    '~> 0.14')
   s.add_development_dependency('rake',     '~> 10')
   s.add_development_dependency('shoulda',  '~> 2.11')
-  s.add_development_dependency('simplecov','~> 0.9.0')
+  s.add_development_dependency('simplecov')
   s.add_development_dependency('systemu',  '~> 2')
   s.add_development_dependency('timecop',  '<= 0.6.0')
 

@@ -2,6 +2,7 @@ require "onelogin/ruby-saml/logging"
 
 require "onelogin/ruby-saml/saml_message"
 require "onelogin/ruby-saml/utils"
+require "onelogin/ruby-saml/setting_error"
 
 # Only supports SAML 2.0
 module OneLogin
@@ -37,6 +38,7 @@ module OneLogin
           response_params << "&#{key.to_s}=#{CGI.escape(value.to_s)}"
         end
 
+        raise SettingError.new "Invalid settings, idp_slo_target_url is not set!" if settings.idp_slo_target_url.nil? or settings.idp_slo_target_url.empty?
         @logout_url = settings.idp_slo_target_url + response_params
       end
 
@@ -52,6 +54,11 @@ module OneLogin
         # Based on the HashWithIndifferentAccess value in Rails we could experience
         # conflicts so this line will solve them.
         relay_state = params[:RelayState] || params['RelayState']
+
+        if relay_state.nil?
+          params.delete(:RelayState)
+          params.delete('RelayState')
+        end
 
         response_doc = create_logout_response_xml_doc(settings, request_id, logout_message)
         response_doc.context[:attribute_quote] = :quote if settings.double_quote_xml_attribute_values
@@ -92,6 +99,11 @@ module OneLogin
       # @return [String] The SAMLResponse String.
       #
       def create_logout_response_xml_doc(settings, request_id = nil, logout_message = nil)
+        document = create_xml_document(settings, request_id, logout_message)
+        sign_document(document, settings)
+      end
+
+      def create_xml_document(settings, request_id = nil, logout_message = nil)
         time = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         response_doc = XMLSecurity::Document.new
@@ -102,13 +114,13 @@ module OneLogin
         root.attributes['IssueInstant'] = time
         root.attributes['Version'] = '2.0'
         root.attributes['InResponseTo'] = request_id unless request_id.nil?
-        root.attributes['Destination'] = settings.idp_slo_target_url unless settings.idp_slo_target_url.nil?
+        root.attributes['Destination'] = settings.idp_slo_target_url unless settings.idp_slo_target_url.nil? or settings.idp_slo_target_url.empty?
 
-        if settings.issuer != nil
+        if settings.sp_entity_id != nil
           issuer = root.add_element "saml:Issuer"
-          issuer.text = settings.issuer
+          issuer.text = settings.sp_entity_id
         end
-        
+
         # add success message
         status = root.add_element 'samlp:Status'
 
@@ -121,14 +133,18 @@ module OneLogin
         status_message = status.add_element 'samlp:StatusMessage'
         status_message.text = logout_message
 
+        response_doc
+      end
+
+      def sign_document(document, settings)
         # embed signature
         if settings.security[:logout_responses_signed] && settings.private_key && settings.certificate && settings.security[:embed_sign]
           private_key = settings.get_sp_key
           cert = settings.get_sp_cert
-          response_doc.sign_document(private_key, cert, settings.security[:signature_method], settings.security[:digest_method])
+          document.sign_document(private_key, cert, settings.security[:signature_method], settings.security[:digest_method])
         end
 
-        response_doc
+        document
       end
 
     end

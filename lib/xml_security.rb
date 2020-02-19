@@ -29,6 +29,7 @@ require "openssl"
 require 'nokogiri'
 require "digest/sha1"
 require "digest/sha2"
+require "onelogin/ruby-saml/utils"
 require "onelogin/ruby-saml/error_handling"
 
 module XMLSecurity
@@ -90,7 +91,7 @@ module XMLSecurity
     ENVELOPED_SIG   = "http://www.w3.org/2000/09/xmldsig#enveloped-signature"
     INC_PREFIX_LIST = "#default samlp saml ds xs xsi md"
 
-    attr_accessor :uuid
+    attr_writer :uuid
 
     def uuid
       @uuid ||= begin
@@ -186,7 +187,7 @@ module XMLSecurity
   class SignedDocument < BaseDocument
     include OneLogin::RubySaml::ErrorHandling
 
-    attr_accessor :signed_element_id
+    attr_writer :signed_element_id
 
     def initialize(response, errors = [])
       super(response)
@@ -206,11 +207,11 @@ module XMLSecurity
       )
 
       if cert_element
-        base64_cert = cert_element.text
+        base64_cert = OneLogin::RubySaml::Utils.element_text(cert_element)
         cert_text = Base64.decode64(base64_cert)
         begin
           cert = OpenSSL::X509::Certificate.new(cert_text)
-        rescue OpenSSL::X509::CertificateError => e
+        rescue OpenSSL::X509::CertificateError => _e
           return append_error("Certificate Error", soft)
         end
 
@@ -249,11 +250,11 @@ module XMLSecurity
       )
 
       if cert_element
-        base64_cert = cert_element.text
+        base64_cert = OneLogin::RubySaml::Utils.element_text(cert_element)
         cert_text = Base64.decode64(base64_cert)
         begin
           cert = OpenSSL::X509::Certificate.new(cert_text)
-        rescue OpenSSL::X509::CertificateError => e
+        rescue OpenSSL::X509::CertificateError => _e
           return append_error("Certificate Error", soft)
         end
 
@@ -296,8 +297,8 @@ module XMLSecurity
         sig_element,
         "./ds:SignatureValue",
         {"ds" => DSIG}
-      ).text
-      signature = Base64.decode64(base64_signature)
+      )
+      signature = Base64.decode64(OneLogin::RubySaml::Utils.element_text(base64_signature))
 
       # canonicalization method
       canon_algorithm = canon_algorithm REXML::XPath.first(
@@ -317,15 +318,17 @@ module XMLSecurity
 
       # check digests
       ref = REXML::XPath.first(sig_element, "//ds:Reference", {"ds"=>DSIG})
-      uri = ref.attributes.get_attribute("URI").value
 
       hashed_element = document.at_xpath("//*[@ID=$id]", nil, { 'id' => extract_signed_element_id })
-      
+
       canon_algorithm = canon_algorithm REXML::XPath.first(
         ref,
         '//ds:CanonicalizationMethod',
         { "ds" => DSIG }
       )
+
+      canon_algorithm = process_transforms(ref, canon_algorithm)
+
       canon_hashed_element = hashed_element.canonicalize(canon_algorithm, inclusive_namespaces)
 
       digest_algorithm = algorithm(REXML::XPath.first(
@@ -338,8 +341,8 @@ module XMLSecurity
         ref,
         "//ds:DigestValue",
         { "ds" => DSIG }
-      ).text
-      digest_value = Base64.decode64(encoded_digest_value)
+      )
+      digest_value = Base64.decode64(OneLogin::RubySaml::Utils.element_text(encoded_digest_value))
 
       unless digests_match?(hash, digest_value)
         @errors << "Digest mismatch"
@@ -359,6 +362,33 @@ module XMLSecurity
     end
 
     private
+
+    def process_transforms(ref, canon_algorithm)
+      transforms = REXML::XPath.match(
+        ref,
+        "//ds:Transforms/ds:Transform",
+        { "ds" => DSIG }
+      )
+
+      transforms.each do |transform_element|
+        if transform_element.attributes && transform_element.attributes["Algorithm"]
+          algorithm = transform_element.attributes["Algorithm"]
+          case algorithm
+            when "http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
+                 "http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"
+              canon_algorithm = Nokogiri::XML::XML_C14N_1_0
+            when "http://www.w3.org/2006/12/xml-c14n11",
+                 "http://www.w3.org/2006/12/xml-c14n11#WithComments"
+              canon_algorithm = Nokogiri::XML::XML_C14N_1_1
+            when "http://www.w3.org/2001/10/xml-exc-c14n#",
+                 "http://www.w3.org/2001/10/xml-exc-c14n#WithComments"
+              canon_algorithm = Nokogiri::XML::XML_C14N_EXCLUSIVE_1_0
+          end
+        end
+      end
+
+      canon_algorithm
+    end
 
     def digests_match?(hash, digest_value)
       hash == digest_value

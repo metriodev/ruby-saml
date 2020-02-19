@@ -1,6 +1,7 @@
 require File.expand_path(File.join(File.dirname(__FILE__), "test_helper"))
 
 require 'onelogin/ruby-saml/settings'
+require 'onelogin/ruby-saml/validation_error'
 
 class SettingsTest < Minitest::Test
 
@@ -11,11 +12,11 @@ class SettingsTest < Minitest::Test
 
     it "should provide getters and settings" do
       accessors = [
-        :idp_entity_id, :idp_sso_target_url, :idp_slo_target_url,
+        :idp_entity_id, :idp_sso_target_url, :idp_slo_target_url, :valid_until,
         :idp_cert, :idp_cert_fingerprint, :idp_cert_fingerprint_algorithm, :idp_cert_multi,
         :idp_attribute_names, :issuer, :assertion_consumer_service_url, :assertion_consumer_service_binding,
         :single_logout_service_url, :single_logout_service_binding,
-        :sp_name_qualifier, :name_identifier_format, :name_identifier_value,
+        :sp_name_qualifier, :name_identifier_format, :name_identifier_value, :name_identifier_value_requested,
         :sessionindex, :attributes_index, :passive, :force_authn,
         :compress_request, :double_quote_xml_attribute_values, :protocol_binding,
         :security, :certificate, :private_key,
@@ -40,6 +41,7 @@ class SettingsTest < Minitest::Test
           :idp_sso_target_url => "http://sso.muda.no/sso",
           :idp_slo_target_url => "http://sso.muda.no/slo",
           :idp_cert_fingerprint => "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+          :valid_until => '2029-04-16T03:35:08.277Z',
           :name_identifier_format => "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
           :attributes_index => 30,
           :passive => true,
@@ -77,6 +79,34 @@ class SettingsTest < Minitest::Test
       assert_equal new_settings.security[:signature_method], XMLSecurity::Document::RSA_SHA1
     end
 
+    it "overrides only provided security attributes passing a second parameter" do
+      config = {
+        :security => {
+          :metadata_signed => true
+        }
+      }
+
+      @default_attributes = OneLogin::RubySaml::Settings::DEFAULTS
+
+      @settings = OneLogin::RubySaml::Settings.new(config, true)
+      assert_equal @settings.security[:metadata_signed], true
+      assert_equal @settings.security[:digest_method], @default_attributes[:security][:digest_method]
+    end
+
+    it "doesn't override only provided security attributes without passing a second parameter" do
+      config = {
+        :security => {
+          :metadata_signed => true
+        }
+      }
+
+      @default_attributes = OneLogin::RubySaml::Settings::DEFAULTS
+
+      @settings = OneLogin::RubySaml::Settings.new(config)
+      assert_equal @settings.security[:metadata_signed], true
+      assert_nil @settings.security[:digest_method]
+    end
+
     describe "#single_logout_service_url" do
       it "when single_logout_service_url is nil but assertion_consumer_logout_service_url returns its value" do
         @settings.single_logout_service_url = nil
@@ -93,7 +123,7 @@ class SettingsTest < Minitest::Test
 
         assert_equal "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect", @settings.single_logout_service_binding
       end
-    end    
+    end
 
     describe "#get_idp_cert" do
       it "returns nil when the cert is an empty string" do
@@ -169,7 +199,7 @@ class SettingsTest < Minitest::Test
 
         assert @settings.get_idp_cert_multi.kind_of? Hash
         assert @settings.get_idp_cert_multi[:signing].kind_of? Array
-        assert @settings.get_idp_cert_multi[:encryption].kind_of? Array        
+        assert @settings.get_idp_cert_multi[:encryption].kind_of? Array
         assert @settings.get_idp_cert_multi[:signing][0].kind_of? OpenSSL::X509::Certificate
         assert @settings.get_idp_cert_multi[:encryption][0].kind_of? OpenSSL::X509::Certificate
       end
@@ -214,6 +244,13 @@ class SettingsTest < Minitest::Test
         }
       end
 
+      it "raises an error if SP certificate expired and check_sp_cert_expiration enabled" do
+        @settings.certificate = ruby_saml_cert_text
+        @settings.security[:check_sp_cert_expiration] = true
+        assert_raises(OneLogin::RubySaml::ValidationError) {
+          settings.get_sp_cert
+        }
+      end
     end
 
     describe "#get_sp_cert_new" do

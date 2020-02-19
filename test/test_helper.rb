@@ -1,5 +1,7 @@
 require 'simplecov'
+require 'coveralls'
 
+SimpleCov.formatter = Coveralls::SimpleCov::Formatter
 SimpleCov.start do
   add_filter "test/"
   add_filter "vendor/"
@@ -117,15 +119,15 @@ class Minitest::Test
   end
 
   def signed_message_encrypted_unsigned_assertion
-    @signed_message_encrypted_unsigned_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'signed_message_encrypted_unsigned_assertion.xml.base64'))    
+    @signed_message_encrypted_unsigned_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'signed_message_encrypted_unsigned_assertion.xml.base64'))
   end
 
   def signed_message_encrypted_signed_assertion
-    @signed_message_encrypted_signed_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'signed_message_encrypted_signed_assertion.xml.base64'))    
+    @signed_message_encrypted_signed_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'signed_message_encrypted_signed_assertion.xml.base64'))
   end
 
   def unsigned_message_encrypted_signed_assertion
-    @unsigned_message_encrypted_signed_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'unsigned_message_encrypted_signed_assertion.xml.base64'))    
+    @unsigned_message_encrypted_signed_assertion ||= File.read(File.join(File.dirname(__FILE__), 'responses', 'unsigned_message_encrypted_signed_assertion.xml.base64'))
   end
 
   def unsigned_message_encrypted_unsigned_assertion
@@ -145,7 +147,7 @@ class Minitest::Test
   end
 
   # certificate used on response_with_undefined_recipient
-  def signature_1  
+  def signature_1
     @signature1 ||= read_certificate("certificate1")
   end
 
@@ -166,12 +168,36 @@ class Minitest::Test
     @idp_metadata_descriptor3 ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_descriptor_3.xml'))
   end
 
+  def idp_metadata_descriptor4
+    @idp_metadata_descriptor4 ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_descriptor_4.xml'))
+  end
+
   def no_idp_metadata_descriptor
     @no_idp_metadata_descriptor ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'no_idp_descriptor.xml'))
   end
 
   def idp_metadata_multiple_descriptors
     @idp_metadata_multiple_descriptors ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_multiple_descriptors.xml'))
+  end
+
+  def idp_metadata_multiple_descriptors2
+    @idp_metadata_multiple_descriptors2 ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_multiple_descriptors_2.xml'))
+  end
+
+  def idp_metadata_multiple_certs
+    @idp_metadata_multiple_descriptors ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_metadata_multi_certs.xml'))
+  end
+
+  def idp_metadata_multiple_signing_certs
+    @idp_metadata_multiple_signing_certs ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_metadata_multi_signing_certs.xml'))
+  end
+
+  def idp_metadata_same_sign_and_encrypt_cert
+    @idp_metadata_same_sign_and_encrypt_cert ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_metadata_same_sign_and_encrypt_cert.xml'))
+  end
+
+  def idp_metadata_different_sign_and_encrypt_cert
+    @idp_metadata_different_sign_and_encrypt_cert ||= File.read(File.join(File.dirname(__FILE__), 'metadata', 'idp_metadata_different_sign_and_encrypt_cert.xml'))
   end
 
   def logout_request_document

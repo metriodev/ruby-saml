@@ -1,4 +1,54 @@
 # RubySaml Changelog
+
+### 1.11.0 (Jul 24, 2019)
+
+* Deprecate settings.issuer in favor of settings.sp_entity_id
+* Add support for certification expiration
+
+### 1.10.2 (Apr 29, 2019)
+
+* Add valid until, accessor
+* Fix Rubygem metadata that requested nokogiri <= 1.5.11
+
+### 1.10.1 (Apr 08, 2019)
+
+* Fix ruby 1.8.7 incompatibilities
+
+### 1.10.0 (Mar 21, 2019)
+* Add Subject support on AuthNRequest to allow SPs provide info to the IdP about the user to be authenticated
+* Improves IdpMetadataParser to allow parse multiple IDPSSODescriptors
+* Improves format_cert method to accept certs with /\x0d/
+* Forces nokogiri >= 1.8.2 when possible
+
+### 1.9.0 (Sept 03, 2018)
+* [#458](https://github.com/onelogin/ruby-saml/pull/458) Remove ruby 2.4+ warnings
+* Improve JRuby support
+* [#465](https://github.com/onelogin/ruby-saml/pull/465) Extend Settings initialization with the new keep_security_attributes parameter
+* Fix wrong message when SessionNotOnOrAfter expired
+* [#471](https://github.com/onelogin/ruby-saml/pull/471) Allow for `allowed_clock_drift` to be set as a string
+
+### 1.8.0 (April 23, 2018)
+* [#437](https://github.com/onelogin/ruby-saml/issues/437) Creating AuthRequests/LogoutRequests/LogoutResponses with nil RelayState should not send empty RelayState URL param
+* [#454](https://github.com/onelogin/ruby-saml/pull/454) Added Response available options
+* [#453](https://github.com/onelogin/ruby-saml/pull/453) Raise a more descriptive exception if idp_sso_target_url is missing
+* [#452](https://github.com/onelogin/ruby-saml/pull/452) Fix behavior of skip_conditions flag on Response
+* [#449](https://github.com/onelogin/ruby-saml/pull/449) Add ability to skip authnstatement validation
+* Clear cached values to be able to use IdpMetadataParser more than once
+* Updated invalid audience error message
+
+### 1.7.2 (Feb 28, 2018)
+* [#446](https://github.com/onelogin/ruby-saml/pull/446) Normalize text returned by OneLogin::RubySaml::Utils.element_text
+
+### 1.7.1 (Feb 28, 2018)
+* [#444](https://github.com/onelogin/ruby-saml/pull/444) Fix audience validation for empty audience restriction
+
+### 1.7.0 (Feb 27, 2018)
+* Fix vulnerability CVE-2017-11428. Process text of nodes properly, ignoring comments
+
+### 1.6.1 (January 15, 2018)
+* [#428](https://github.com/onelogin/ruby-saml/issues/428) Fix a bug on IdPMetadataParser when parsing certificates
+* [#426](https://github.com/onelogin/ruby-saml/pull/426) Ensure `Rails` responds to `logger`
+
 ### 1.6.0 (November 27, 2017)
 * [#418](https://github.com/onelogin/ruby-saml/pull/418) Improve SAML message signature validation using original encoded parameters instead decoded in order to avoid conflicts (URL-encoding is not canonical, reported issues with ADFS)
 * [#420](https://github.com/onelogin/ruby-saml/pull/420) Expose NameID Format on SloLogoutrequest

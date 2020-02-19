@@ -24,7 +24,7 @@ module OneLogin
       # Constructs the Logout Response. A Logout Response Object that is an extension of the SamlMessage class.
       # @param response  [String] A UUEncoded logout response from the IdP.
       # @param settings  [OneLogin::RubySaml::Settings|nil] Toolkit settings
-      # @param options   [Hash] Extra parameters. 
+      # @param options   [Hash] Extra parameters.
       #                    :matches_request_id It will validate that the logout response matches the ID of the request.
       #                    :get_params GET Parameters, including the SAMLResponse
       #                    :relax_signature_validation to accept signatures if no idp certificate registered on settings
@@ -50,12 +50,9 @@ module OneLogin
       # Checks if the Status has the "Success" code
       # @return [Boolean] True if the StatusCode is Sucess
       # @raise [ValidationError] if soft == false and validation fails
-      # 
+      #
       def success?
-        unless status_code == "urn:oasis:names:tc:SAML:2.0:status:Success"
-          return append_error("Bad status code. Expected <urn:oasis:names:tc:SAML:2.0:status:Success>, but was: <#@status_code>")
-        end
-        true
+        return status_code == "urn:oasis:names:tc:SAML:2.0:status:Success"
       end
 
       # @return [String|nil] Gets the InResponseTo attribute from the Logout Response if exists.
@@ -65,7 +62,7 @@ module OneLogin
           node = REXML::XPath.first(
             document,
             "/p:LogoutResponse",
-            { "p" => PROTOCOL, "a" => ASSERTION }
+            { "p" => PROTOCOL }
           )
           node.nil? ? nil : node.attributes['InResponseTo']
         end
@@ -80,7 +77,7 @@ module OneLogin
             "/p:LogoutResponse/a:Issuer",
             { "p" => PROTOCOL, "a" => ASSERTION }
           )
-          node.nil? ? nil : node.text
+          Utils.element_text(node)
         end
       end
 
@@ -88,7 +85,7 @@ module OneLogin
       #
       def status_code
         @status_code ||= begin
-          node = REXML::XPath.first(document, "/p:LogoutResponse/p:Status/p:StatusCode", { "p" => PROTOCOL, "a" => ASSERTION })
+          node = REXML::XPath.first(document, "/p:LogoutResponse/p:Status/p:StatusCode", { "p" => PROTOCOL })
           node.nil? ? nil : node.attributes["Value"]
         end
       end
@@ -98,9 +95,9 @@ module OneLogin
           node = REXML::XPath.first(
             document,
             "/p:LogoutResponse/p:Status/p:StatusMessage",
-            { "p" => PROTOCOL, "a" => ASSERTION }
+            { "p" => PROTOCOL }
           )
-          node.text if node
+          Utils.element_text(node)
         end
       end
 
@@ -146,7 +143,7 @@ module OneLogin
 
       # Validates the Logout Response against the specified schema.
       # @return [Boolean] True if the XML is valid, otherwise False if soft=True
-      # @raise [ValidationError] if soft == false and validation fails 
+      # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_structure
         unless valid_saml?(document, soft)
@@ -166,7 +163,7 @@ module OneLogin
 
         return append_error("No settings on logout response") if settings.nil?
 
-        return append_error("No issuer in settings of the logout response") if settings.issuer.nil?
+        return append_error("No sp_entity_id in settings of the logout response") if settings.sp_entity_id.nil?
 
         if settings.idp_cert_fingerprint.nil? && settings.idp_cert.nil? && settings.idp_cert_multi.nil?
           return append_error("No fingerprint or certificate on settings of the logout response")
@@ -205,7 +202,7 @@ module OneLogin
       # Validates the Signature if it exists and the GET parameters are provided
       # @return [Boolean] True if not contains a Signature or if the Signature is valid, otherwise False if soft=True
       # @raise [ValidationError] if soft == false and validation fails
-      #      
+      #
       def validate_signature
         return true unless !options.nil?
         return true unless options.has_key? :get_params
@@ -231,33 +228,48 @@ module OneLogin
           :raw_sig_alg     => options[:raw_get_params]['SigAlg']
         )
 
+        expired = false
         if idp_certs.nil? || idp_certs[:signing].empty?
           valid = OneLogin::RubySaml::Utils.verify_signature(
-            :cert         => settings.get_idp_cert,
+            :cert         => idp_cert,
             :sig_alg      => options[:get_params]['SigAlg'],
             :signature    => options[:get_params]['Signature'],
             :query_string => query_string
           )
+          if valid && settings.security[:check_idp_cert_expiration]
+            if OneLogin::RubySaml::Utils.is_cert_expired(idp_cert)
+              expired = true
+            end
+          end
         else
           valid = false
-          idp_certs[:signing].each do |idp_cert|
+          idp_certs[:signing].each do |signing_idp_cert|
             valid = OneLogin::RubySaml::Utils.verify_signature(
-              :cert         => idp_cert,
+              :cert         => signing_idp_cert,
               :sig_alg      => options[:get_params]['SigAlg'],
               :signature    => options[:get_params]['Signature'],
               :query_string => query_string
             )
             if valid
+              if settings.security[:check_idp_cert_expiration]
+                if OneLogin::RubySaml::Utils.is_cert_expired(signing_idp_cert)
+                  expired = true
+                end
+              end
               break
             end
           end
         end
 
+        if expired
+          error_msg = "IdP x509 certificate expired"
+          return append_error(error_msg)
+        end
         unless valid
           error_msg = "Invalid Signature on Logout Response"
           return append_error(error_msg)
         end
-        true        
+        true
       end
 
     end

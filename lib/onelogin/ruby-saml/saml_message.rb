@@ -62,7 +62,7 @@ module OneLogin
       # @param document [REXML::Document] The message that will be validated
       # @param soft [Boolean] soft Enable or Disable the soft mode (In order to raise exceptions when the message is invalid or not)
       # @return [Boolean] True if the XML is valid, otherwise False, if soft=True
-      # @raise [ValidationError] if soft == false and validation fails 
+      # @raise [ValidationError] if soft == false and validation fails
       #
       def valid_saml?(document, soft = true)
         begin
@@ -74,9 +74,9 @@ module OneLogin
           raise ValidationError.new("XML load failed: #{error.message}")
         end
 
-        SamlMessage.schema.validate(xml).map do |error|
+        SamlMessage.schema.validate(xml).map do |schema_error|
           return false if soft
-          raise ValidationError.new("#{error.message}\n\n#{xml.to_s}")
+          raise ValidationError.new("#{schema_error.message}\n\n#{xml.to_s}")
         end
       end
 
@@ -105,7 +105,7 @@ module OneLogin
       def encode_raw_saml(saml, settings)
         saml = deflate(saml) if settings.compress_request
 
-        CGI.escape(Base64.encode64(saml))
+        CGI.escape(encode(saml))
       end
 
       # Base 64 decode method
@@ -121,7 +121,11 @@ module OneLogin
       # @return [String] The encoded string
       #
       def encode(string)
-        Base64.encode64(string).gsub(/\n/, "")
+        if Base64.respond_to?('strict_encode64')
+          Base64.strict_encode64(string)
+        else
+          Base64.encode64(string).gsub(/\n/, "")
+        end
       end
 
       # Check if a string is base64 encoded

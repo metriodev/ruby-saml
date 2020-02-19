@@ -30,6 +30,15 @@ module OneLogin
 
       attr_accessor :soft
 
+      # Response available options
+      # This is not a whitelist to allow people extending OneLogin::RubySaml:Response
+      # and pass custom options
+      AVAILABLE_OPTIONS = [
+        :allowed_clock_drift, :check_duplicated_attributes, :matches_request_id, :settings, :skip_authnstatement, :skip_conditions,
+        :skip_destination, :skip_recipient_check, :skip_subject_confirmation
+      ]
+      # TODO: Update the comment on initialize to describe every option
+
       # Constructs the SAML Response. A Response Object that is an extension of the SamlMessage class.
       # @param response [String] A UUEncoded SAML response from the IdP.
       # @param options  [Hash]   :settings to provide the OneLogin::RubySaml::Settings object
@@ -71,10 +80,7 @@ module OneLogin
       # @return [String] the NameID provided by the SAML response from the IdP.
       #
       def name_id
-        @name_id ||=
-          if name_id_node
-            name_id_node.text
-          end
+        @name_id ||= Utils.element_text(name_id_node)
       end
 
       alias_method :nameid, :name_id
@@ -159,15 +165,16 @@ module OneLogin
                 if (e.elements.nil? || e.elements.size == 0)
                   # SAMLCore requires that nil AttributeValues MUST contain xsi:nil XML attribute set to "true" or "1"
                   # otherwise the value is to be regarded as empty.
-                  ["true", "1"].include?(e.attributes['xsi:nil']) ? nil : e.text.to_s
+                  ["true", "1"].include?(e.attributes['xsi:nil']) ? nil : Utils.element_text(e)
                 # explicitly support saml2:NameID with saml2:NameQualifier if supplied in attributes
                 # this is useful for allowing eduPersonTargetedId to be passed as an opaque identifier to use to
                 # identify the subject in an SP rather than email or other less opaque attributes
                 # NameQualifier, if present is prefixed with a "/" to the value
                 else
-                 REXML::XPath.match(e,'a:NameID', { "a" => ASSERTION }).collect{|n|
-                    (n.attributes['NameQualifier'] ? n.attributes['NameQualifier'] +"/" : '') + n.text.to_s
-                  }
+                  REXML::XPath.match(e,'a:NameID', { "a" => ASSERTION }).collect do |n|
+                    base_path = n.attributes['NameQualifier'] ? "#{n.attributes['NameQualifier']}/" : ''
+                    "#{base_path}#{Utils.element_text(n)}"
+                  end
                 end
               }
 
@@ -215,8 +222,8 @@ module OneLogin
                 "/p:Response/p:Status/p:StatusCode/p:StatusCode",
                 { "p" => PROTOCOL }
               )
-              statuses = nodes.collect do |node|
-                node.attributes["Value"]
+              statuses = nodes.collect do |inner_node|
+                inner_node.attributes["Value"]
               end
               extra_code = statuses.join(" | ")
               if extra_code
@@ -238,8 +245,7 @@ module OneLogin
             { "p" => PROTOCOL }
           )
           if nodes.size == 1
-            node = nodes[0]
-            node.text if node
+            Utils.element_text(nodes.first)
           end
         end
       end
@@ -272,7 +278,6 @@ module OneLogin
       #
       def issuers
         @issuers ||= begin
-          issuers = []
           issuer_response_nodes = REXML::XPath.match(
             document,
             "/p:Response/a:Issuer",
@@ -284,7 +289,6 @@ module OneLogin
             raise ValidationError.new(error_msg)
           end
 
-          doc = decrypted_document.nil? ? document : decrypted_document
           issuer_assertion_nodes = xpath_from_signed_assertion("/a:Issuer")
           unless issuer_assertion_nodes.size == 1
             error_msg = "Issuer of the Assertion not found or multiple."
@@ -292,10 +296,7 @@ module OneLogin
           end
 
           nodes = issuer_response_nodes + issuer_assertion_nodes
-          nodes.each do |node|
-            issuers << node.text if node.text
-          end
-          issuers.uniq
+          nodes.map { |node| Utils.element_text(node) }.compact.uniq
         end
       end
 
@@ -329,21 +330,15 @@ module OneLogin
       #
       def audiences
         @audiences ||= begin
-          audiences = []
           nodes = xpath_from_signed_assertion('/a:Conditions/a:AudienceRestriction/a:Audience')
-          nodes.each do |node|
-            if node && node.text
-              audiences << node.text
-            end
-          end
-          audiences
+          nodes.map { |node| Utils.element_text(node) }.reject(&:empty?)
         end
       end
 
       # returns the allowed clock drift on timing validation
       # @return [Integer]
       def allowed_clock_drift
-        return options[:allowed_clock_drift] || 0
+        return options[:allowed_clock_drift].to_f
       end
 
       private
@@ -594,10 +589,11 @@ module OneLogin
       # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_audience
-        return true if audiences.empty? || settings.issuer.nil? || settings.issuer.empty?
+        return true if audiences.empty? || settings.sp_entity_id.nil? || settings.sp_entity_id.empty?
 
-        unless audiences.include? settings.issuer
-          error_msg = "#{settings.issuer} is not a valid audience for this Response - Valid audiences: #{audiences.join(',')}"
+        unless audiences.include? settings.sp_entity_id
+          s = audiences.count > 1 ? 's' : '';
+          error_msg = "Invalid Audience#{s}. The audience#{s} #{audiences.join(',')}, did not match the expected audience #{settings.sp_entity_id}"
           return append_error(error_msg)
         end
 
@@ -629,10 +625,13 @@ module OneLogin
       end
 
       # Checks that the samlp:Response/saml:Assertion/saml:Conditions element exists and is unique.
+      # (If the response was initialized with the :skip_conditions option, this validation is skipped)
       # If fails, the error is added to the errors array
       # @return [Boolean] True if there is a conditions element and is unique
       #
       def validate_one_conditions
+        return true if options[:skip_conditions]
+
         conditions_nodes = xpath_from_signed_assertion('/a:Conditions')
         unless conditions_nodes.size == 1
           error_msg = "The Assertion must include one Conditions element"
@@ -647,6 +646,8 @@ module OneLogin
       # @return [Boolean] True if there is a authnstatement element and is unique
       #
       def validate_one_authnstatement
+        return true if options[:skip_authnstatement]
+
         authnstatement_nodes = xpath_from_signed_assertion('/a:AuthnStatement')
         unless authnstatement_nodes.size == 1
           error_msg = "The Assertion must include one AuthnStatement element"
@@ -708,7 +709,7 @@ module OneLogin
       # this time validation is relaxed by the allowed_clock_drift value)
       # If fails, the error is added to the errors array
       # @param soft [Boolean] soft Enable or Disable the soft mode (In order to raise exceptions when the response is invalid or not)
-      # @return [Boolean] True if the SessionNotOnOrAfter of the AttributeStatement is valid, otherwise (when expired) False if soft=True
+      # @return [Boolean] True if the SessionNotOnOrAfter of the AuthnStatement is valid, otherwise (when expired) False if soft=True
       # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_session_expiration(soft = true)
@@ -716,7 +717,7 @@ module OneLogin
 
         now = Time.now.utc
         unless (session_expires_at + allowed_clock_drift) > now
-          error_msg = "The attributes have expired, based on the SessionNotOnOrAfter of the AttributeStatement of this Response"
+          error_msg = "The attributes have expired, based on the SessionNotOnOrAfter of the AuthnStatement of this Response"
           return append_error(error_msg)
         end
 
@@ -780,8 +781,8 @@ module OneLogin
             return append_error("An empty NameID value found")
           end
 
-          unless settings.issuer.nil? || settings.issuer.empty? || name_id_spnamequalifier.nil? || name_id_spnamequalifier.empty?
-            if name_id_spnamequalifier != settings.issuer
+          unless settings.sp_entity_id.nil? || settings.sp_entity_id.empty? || name_id_spnamequalifier.nil? || name_id_spnamequalifier.empty?
+            if name_id_spnamequalifier != settings.sp_entity_id
               return append_error("The SPNameQualifier value mistmatch the SP entityID value.")
             end
           end
@@ -820,26 +821,50 @@ module OneLogin
         end
 
         if sig_elements.size != 1
+          if  sig_elements.size == 0
+             append_error("Signed element id ##{doc.signed_element_id} is not found")
+          else
+             append_error("Signed element id ##{doc.signed_element_id} is found more than once")
+          end
           return append_error(error_msg)
         end
+
 
         idp_certs = settings.get_idp_cert_multi
         if idp_certs.nil? || idp_certs[:signing].empty?
           opts = {}
           opts[:fingerprint_alg] = settings.idp_cert_fingerprint_algorithm
-          opts[:cert] = settings.get_idp_cert
+          idp_cert = settings.get_idp_cert
           fingerprint = settings.get_fingerprint
+          opts[:cert] = idp_cert
 
-          unless fingerprint && doc.validate_document(fingerprint, @soft, opts)
+          if fingerprint && doc.validate_document(fingerprint, @soft, opts)
+            if settings.security[:check_idp_cert_expiration]
+              if OneLogin::RubySaml::Utils.is_cert_expired(idp_cert)
+                error_msg = "IdP x509 certificate expired"
+                return append_error(error_msg)
+              end
+            end
+          else
             return append_error(error_msg)
           end
         else
           valid = false
+          expired = false
           idp_certs[:signing].each do |idp_cert|
             valid = doc.validate_document_with_cert(idp_cert)
             if valid
+              if settings.security[:check_idp_cert_expiration]
+                if OneLogin::RubySaml::Utils.is_cert_expired(idp_cert)
+                  expired = true
+                end
+              end
               break
             end
+          end
+          if expired
+            error_msg = "IdP x509 certificate expired"
+            return append_error(error_msg)
           end
           unless valid
             return append_error(error_msg)

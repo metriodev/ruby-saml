@@ -1,6 +1,7 @@
 require "xml_security"
 require "onelogin/ruby-saml/attribute_service"
 require "onelogin/ruby-saml/utils"
+require "onelogin/ruby-saml/validation_error"
 
 # Only supports SAML 2.0
 module OneLogin
@@ -9,8 +10,15 @@ module OneLogin
     # SAML2 Toolkit Settings
     #
     class Settings
-      def initialize(overrides = {})
-        config = DEFAULTS.merge(overrides)
+      def initialize(overrides = {}, keep_security_attributes = false)
+        if keep_security_attributes
+          security_attributes = overrides.delete(:security) || {}
+          config = DEFAULTS.merge(overrides)
+          config[:security] = DEFAULTS[:security].merge(security_attributes)
+        else
+          config = DEFAULTS.merge(overrides)
+        end
+
         config.each do |k,v|
           acc = "#{k.to_s}=".to_sym
           if respond_to? acc
@@ -31,14 +39,15 @@ module OneLogin
       attr_accessor :idp_cert_multi
       attr_accessor :idp_attribute_names
       attr_accessor :idp_name_qualifier
+      attr_accessor :valid_until
       # SP Data
-      attr_accessor :issuer
       attr_accessor :assertion_consumer_service_url
       attr_accessor :assertion_consumer_service_binding
       attr_accessor :sp_name_qualifier
       attr_accessor :name_identifier_format
       attr_accessor :name_identifier_value
       attr_accessor :name_identifier_allow_create
+      attr_accessor :name_identifier_value_requested
       attr_accessor :sessionindex
       attr_accessor :compress_request
       attr_accessor :compress_response
@@ -60,6 +69,28 @@ module OneLogin
       # Compability
       attr_accessor :assertion_consumer_logout_service_url
       attr_accessor :assertion_consumer_logout_service_binding
+      attr_accessor :issuer
+
+      # @return [String] SP Entity ID
+      #
+      def sp_entity_id
+        val = nil
+        if @sp_entity_id.nil?
+          if @issuer
+            val = @issuer
+          end
+        else
+          val = @sp_entity_id
+        end
+        val
+      end
+
+      # Setter for SP Entity ID.
+      # @param val [String].
+      #
+      def sp_entity_id=(val)
+        @sp_entity_id = val
+      end
 
       # @return [String] Single Logout Service URL.
       #
@@ -159,7 +190,15 @@ module OneLogin
         return nil if certificate.nil? || certificate.empty?
 
         formatted_cert = OneLogin::RubySaml::Utils.format_cert(certificate)
-        OpenSSL::X509::Certificate.new(formatted_cert)
+        cert = OpenSSL::X509::Certificate.new(formatted_cert)
+
+        if security[:check_sp_cert_expiration]
+          if OneLogin::RubySaml::Utils.is_cert_expired(cert)
+            raise OneLogin::RubySaml::ValidationError.new("The SP certificate expired.")
+          end
+        end
+
+        cert
       end
 
       # @return [OpenSSL::X509::Certificate|nil] Build the New SP certificate from the settings (previously format it)
@@ -189,6 +228,7 @@ module OneLogin
         :compress_request                          => true,
         :compress_response                         => true,
         :soft                                      => true,
+        :double_quote_xml_attribute_values         => false,
         :security                                  => {
           :authn_requests_signed      => false,
           :logout_requests_signed     => false,
@@ -199,9 +239,10 @@ module OneLogin
           :metadata_signed            => false,
           :embed_sign                 => false,
           :digest_method              => XMLSecurity::Document::SHA1,
-          :signature_method           => XMLSecurity::Document::RSA_SHA1
-        }.freeze,
-        :double_quote_xml_attribute_values         => false,
+          :signature_method           => XMLSecurity::Document::RSA_SHA1,
+          :check_idp_cert_expiration  => false,
+          :check_sp_cert_expiration   => false
+        }.freeze
       }.freeze
     end
   end

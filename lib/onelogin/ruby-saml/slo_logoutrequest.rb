@@ -24,9 +24,9 @@ module OneLogin
 
       # Constructs the Logout Request. A Logout Request Object that is an extension of the SamlMessage class.
       # @param request [String] A UUEncoded Logout Request from the IdP.
-      # @param options [Hash]  :settings to provide the OneLogin::RubySaml::Settings object 
+      # @param options [Hash]  :settings to provide the OneLogin::RubySaml::Settings object
       #                        Or :allowed_clock_drift for the logout request validation process to allow a clock drift when checking dates with
-      #                        Or :relax_signature_validation to accept signatures if no idp certificate registered on settings 
+      #                        Or :relax_signature_validation to accept signatures if no idp certificate registered on settings
       #
       # @raise [ArgumentError] If Request is nil
       #
@@ -60,7 +60,7 @@ module OneLogin
       def name_id
         @name_id ||= begin
           node = REXML::XPath.first(document, "/p:LogoutRequest/a:NameID", { "p" => PROTOCOL, "a" => ASSERTION })
-          node.nil? ? nil : node.text
+          Utils.element_text(node)
         end
       end
 
@@ -93,7 +93,7 @@ module OneLogin
             "/p:LogoutRequest/a:Issuer",
             { "p" => PROTOCOL, "a" => ASSERTION }
           )
-          node.nil? ? nil : node.text
+          Utils.element_text(node)
         end
       end
 
@@ -115,18 +115,13 @@ module OneLogin
       # @return [Array] Gets the SessionIndex if exists (Supported multiple values). Empty Array if none found
       #
       def session_indexes
-        s_indexes = []
         nodes = REXML::XPath.match(
           document,
           "/p:LogoutRequest/p:SessionIndex",
           { "p" => PROTOCOL }
         )
 
-        nodes.each do |node|
-          s_indexes << node.text
-        end
-
-        s_indexes
+        nodes.map { |node| Utils.element_text(node) }
       end
 
       private
@@ -197,7 +192,7 @@ module OneLogin
 
       # Validates the Logout Request against the specified schema.
       # @return [Boolean] True if the XML is valid, otherwise False if soft=True
-      # @raise [ValidationError] if soft == false and validation fails 
+      # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_structure
         unless valid_saml?(document, soft)
@@ -207,7 +202,7 @@ module OneLogin
         true
       end
 
-      # Validates that the Logout Request provided in the initialization is not empty, 
+      # Validates that the Logout Request provided in the initialization is not empty,
       # @return [Boolean] True if the required info is found, otherwise False if soft=True
       # @raise [ValidationError] if soft == false and validation fails
       #
@@ -285,28 +280,43 @@ module OneLogin
           :raw_sig_alg     => options[:raw_get_params]['SigAlg']
         )
 
+        expired = false
         if idp_certs.nil? || idp_certs[:signing].empty?
           valid = OneLogin::RubySaml::Utils.verify_signature(
-            :cert         => settings.get_idp_cert,
+            :cert         => idp_cert,
             :sig_alg      => options[:get_params]['SigAlg'],
             :signature    => options[:get_params]['Signature'],
             :query_string => query_string
           )
+          if valid && settings.security[:check_idp_cert_expiration]
+            if OneLogin::RubySaml::Utils.is_cert_expired(idp_cert)
+              expired = true
+            end
+          end
         else
           valid = false
-          idp_certs[:signing].each do |idp_cert|
+          idp_certs[:signing].each do |signing_idp_cert|
             valid = OneLogin::RubySaml::Utils.verify_signature(
-              :cert         => idp_cert,
+              :cert         => signing_idp_cert,
               :sig_alg      => options[:get_params]['SigAlg'],
               :signature    => options[:get_params]['Signature'],
               :query_string => query_string
             )
             if valid
+              if settings.security[:check_idp_cert_expiration]
+                if OneLogin::RubySaml::Utils.is_cert_expired(signing_idp_cert)
+                  expired = true
+                end
+              end
               break
             end
           end
         end
 
+        if expired
+          error_msg = "IdP x509 certificate expired"
+          return append_error(error_msg)
+        end
         unless valid
           return append_error("Invalid Signature on Logout Request")
         end
