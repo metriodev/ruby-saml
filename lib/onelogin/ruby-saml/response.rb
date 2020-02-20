@@ -795,7 +795,9 @@ module OneLogin
       # @raise [ValidationError] if soft == false and validation fails
       #
       def validate_encryption
-        options[:skip_encryption] || assertion_encrypted? ?
+        options[:skip_encryption].nil? ||
+        options[:skip_encryption] ||
+        assertion_encrypted? ?
           true :
           append_error("EncryptedAssertion missing on SAML Response")
       end
